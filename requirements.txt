@@ -1,6 +1,6 @@
 flask
 gunicorn
-numpy
-opencv-python
-Pillow
-py-potrace
+numpy==1.21.6
+opencv-python==4.5.5.64
+Pillow==9.5.0
+py-potrace==0.1.0
