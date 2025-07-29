@@ -3,7 +3,7 @@ import base64
 import cv2
 import numpy as np
 from PIL import Image
-import potrace
+import subprocess
 import io
 
 app = Flask(__name__)
