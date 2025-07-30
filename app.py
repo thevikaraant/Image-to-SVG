@@ -1,47 +1,25 @@
-import os
-import requests
-from flask import Flask, request, Response, render_template_string
+import io, os, subprocess
+from flask import Flask, request, Response
+from PIL import Image
+import numpy as np
+import potrace
 
 app = Flask(__name__)
 
-API_ID = os.environ.get("VECTORIZER_API_ID", "")
-API_SECRET = os.environ.get("VECTORIZER_API_SECRET", "")
-VECTORIZE_URL = "https://vectorizer.ai/api/v1/vectorize"
-
-@app.route("/")
-def index():
-    return render_template_string("""
-    <!doctype html>
-    <html>
-      <head><title>PNG → SVG via Vectorizer.ai</title></head>
-      <body>
-        <h1>PNG to SVG Converter</h1>
-        <form action="/convert" method="post" enctype="multipart/form-data">
-          <p><input type="file" name="image" accept="image/png" required></p>
-          <p><button type="submit">Convert</button></p>
-        </form>
-      </body>
-    </html>
-    """)
-
 @app.route("/convert", methods=["POST"])
 def convert():
-    f = request.files.get("image")
-    if not f:
-        return "No file uploaded", 400
-
-    resp = requests.post(
-        VECTORIZE_URL,
-        auth=(API_ID, API_SECRET),
-        files={"image": f.stream}
-    )
-    try:
-        resp.raise_for_status()
-    except requests.HTTPError as e:
-        return f"Vectorizer.ai error: {e}", resp.status_code
-
-    return Response(resp.content, mimetype="image/svg+xml")
+    if "image" not in request.files:
+        return "No image uploaded", 400
+    # load sketch PNG
+    img = Image.open(request.files["image"].stream).convert("L")
+    # binarize
+    bw = img.point(lambda x: 0 if x < 128 else 255, "1")
+    arr = np.array(bw, dtype=np.uint8)
+    bmp = potrace.Bitmap(arr)
+    path = bmp.trace(turdsize=20, alphamax=1.0, opttolerance=0.2)
+    svg = '<?xml version="1.0"?>\n' + path.to_svg()
+    return Response(svg, mimetype="image/svg+xml")
 
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", "5000"))
+    port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port)
