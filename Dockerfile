@@ -1,24 +1,29 @@
-# Dockerfile for PNG to SVG Converter
+# Use a slim Python base
 FROM python:3.10-slim
 
-# Install system dependencies
-RUN apt-get update && \
-    apt-get install -y potrace libpng-dev && \
-    rm -rf /var/lib/apt/lists/*
+# Don’t buffer Python stdout/stderr and skip .pyc files
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PORT=10000
+
+# Install Potrace (no extra recommends) and libpng for Pillow
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends potrace libpng-dev \
+    && rm -rf /var/lib/apt/lists/*
 
 # Set working directory
 WORKDIR /app
 
-# Copy and install Python dependencies
+# Install Python dependencies
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --upgrade pip \
+    && pip install --no-cache-dir -r requirements.txt
 
-# Copy application code
+# Copy source code last to leverage Docker cache on deps
 COPY . .
 
-# Expose port
-ENV PORT 10000
-EXPOSE 10000
+# Expose the port
+EXPOSE ${PORT}
 
-# Start application with Gunicorn
-CMD ["gunicorn", "--bind", "0.0.0.0:10000", "app:app"]
+# Run with Gunicorn
+CMD ["gunicorn", "--bind", "0.0.0.0:${PORT}", "app:app"]
