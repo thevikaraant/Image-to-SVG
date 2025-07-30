@@ -1,8 +1,8 @@
-import os
 import io
-import subprocess
 from flask import Flask, request, Response, render_template_string
 from PIL import Image
+import numpy as np
+import potrace
 
 app = Flask(__name__)
 
@@ -11,17 +11,11 @@ def index():
     return render_template_string("""
     <!doctype html>
     <html>
-      <head>
-        <title>PNG to SVG Converter</title>
-      </head>
+      <head><title>PNG → SVG</title></head>
       <body>
-        <h1>PNG → SVG Converter</h1>
+        <h1>Upload a PNG to vectorize</h1>
         <form action="/convert" method="post" enctype="multipart/form-data">
-          <p>
-            <label>PNG File:
-              <input type="file" name="image" accept="image/png" required>
-            </label>
-          </p>
+          <p><input type="file" name="image" accept="image/png" required></p>
           <p>
             <label>Threshold (0–255):
               <input type="number" name="threshold" min="0" max="255" value="128">
@@ -37,37 +31,33 @@ def index():
 def convert():
     if "image" not in request.files:
         return "No image uploaded", 400
-    upload = request.files["image"]
 
+    # 1) Load image & grayscale
     threshold = int(request.form.get("threshold", 128))
-    img = Image.open(upload.stream).convert("L")
+    img = Image.open(request.files["image"].stream).convert("L")
 
-    # Binarize to 1-bit
+    # 2) Binarize to 1-bit (0 or 255)
     bw = img.point(lambda x: 0 if x < threshold else 255, "1")
 
-    # Convert to RGB & save as PPM in memory
-    ppm_buf = io.BytesIO()
-    bw.convert("RGB").save(ppm_buf, format="PPM")
-    pnm_data = ppm_buf.getvalue()
+    # 3) Convert to numpy array of 0/1
+    arr = np.array(bw, dtype=np.uint8)
+    # Potrace expects bits: 1=black, 0=white
+    bmp = potrace.Bitmap(arr)
 
-    # Trace with Potrace
-    proc = subprocess.run(
-        [
-            "potrace",
-            "-s",
-            "--turdsize", "20",
-            "--alphamax", "1.0",
-            "--opttolerance", "0.2",
-            "--output", "-"
-        ],
-        input=pnm_data,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        check=True
+    # 4) Trace to get a Path object
+    PATH = bmp.trace(turdsize=20, alphamax=1.0, opttolerance=0.2)
+
+    # 5) Generate SVG string
+    svg_header = (
+        '<?xml version="1.0" standalone="no"?>\n'
+        '<!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.0//EN" '
+        '"http://www.w3.org/TR/2001/REC-SVG-20010904/DTD/svg10.dtd">\n'
     )
+    svg_body = PATH.to_svg()
+    svg = svg_header + svg_body
 
-    return Response(proc.stdout, mimetype="image/svg+xml")
+    return Response(svg, mimetype="image/svg+xml")
+
 
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 5000))
-    app.run(host="0.0.0.0", port=port, debug=True)
+    app.run(host="0.0.0.0", port=int(__import__("os").environ.get("PORT", 5000)), debug=True)
