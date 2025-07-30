@@ -1,14 +1,38 @@
 import os
 import io
 import subprocess
-from flask import Flask, request, Response
+from flask import Flask, request, Response, render_template_string
 from PIL import Image
 
 app = Flask(__name__)
 
 @app.route("/")
 def index():
-    return "PNG to SVG Converter is Live"
+    # Simple upload form so you can test in-browser
+    return render_template_string("""
+    <!doctype html>
+    <html>
+      <head>
+        <title>PNG to SVG Converter</title>
+      </head>
+      <body>
+        <h1>PNG → SVG Converter</h1>
+        <form action="/convert" method="post" enctype="multipart/form-data">
+          <p>
+            <label>PNG File:
+              <input type="file" name="image" accept="image/png" required>
+            </label>
+          </p>
+          <p>
+            <label>Threshold (0–255):
+              <input type="number" name="threshold" min="0" max="255" value="128">
+            </label>
+          </p>
+          <p><button type="submit">Convert to SVG</button></p>
+        </form>
+      </body>
+    </html>
+    """)
 
 @app.route("/convert", methods=["POST"])
 def convert():
@@ -16,27 +40,37 @@ def convert():
         return "No image uploaded", 400
     upload = request.files["image"]
 
-    # Configurable black-white threshold (0-255)
+    # 1) Load and convert to grayscale
     threshold = int(request.form.get("threshold", 128))
     img = Image.open(upload.stream).convert("L")
-    img = img.point(lambda x: 0 if x < threshold else 255, "1")  # 1-bit image
 
-    # Save as PBM in memory
-    pbm_io = io.BytesIO()
-    img.save(pbm_io, format="PBM")
-    pbm_data = pbm_io.getvalue()
+    # 2) Binarize to 1‑bit
+    bw = img.point(lambda x: 0 if x < threshold else 255, "1")
 
-    # Call Potrace with despeckling, corner smoothing, and optimization
+    # 3) Convert 1‑bit to RGB and save as PPM in-memory
+    ppm_buf = io.BytesIO()
+    bw.convert("RGB").save(ppm_buf, format="PPM")
+    pnm_data = ppm_buf.getvalue()
+
+    # 4) Invoke Potrace to output an SVG
     proc = subprocess.run(
-        ["potrace", "-s", "--turdsize", "20", "--alphamax", "1.0", "--opttolerance", "0.2", "--output", "-"],
-        input=pbm_data,
+        [
+          "potrace",
+          "-s",                # SVG output
+          "--turdsize", "20",  # despeckle small islands
+          "--alphamax", "1.0", # corner smoothing
+          "--opttolerance", "0.2",  # path optimization
+          "--output", "-"      # send SVG to stdout
+        ],
+        input=pnm_data,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         check=True
     )
 
-    svg_bytes = proc.stdout
-    return Response(svg_bytes, mimetype="image/svg+xml")
+    # 5) Return SVG to client
+    return Response(proc.stdout, mimetype="image/svg+xml")
+
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
